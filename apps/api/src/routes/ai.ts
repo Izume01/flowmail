@@ -1,101 +1,83 @@
 import { Hono } from 'hono';
+import { zValidator } from '@hono/zod-validator';
+import { z } from 'zod';
 import { getDeliverabilityScore, improveEmailContent, analyzeSentiment } from '@flowmail/ai';
-import { createDbClient, TenantDB } from '@flowmail/db';
 import { calculateProbability } from '../services/oracle';
+import { apiKeyAuth } from '../middleware/auth';
+import { getPrisma, TenantDB } from '@flowmail/db';
 
-type Variables = {
-  projectId: string;
-};
+const ai = new Hono<{
+  Variables: {
+    projectId: string;
+  };
+}>();
 
-const ai = new Hono<{ Variables: Variables }>();
+ai.use('*', apiKeyAuth);
 
-ai.post('/predict', async (c) => {
-  const body = await c.req.json();
-  const projectId = c.get('projectId');
-  
-  if (!projectId) {
-    return c.json({ error: 'Project ID missing' }, 400);
-  }
-
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !supabaseKey) {
-    return c.json({ error: 'Database configuration missing' }, 500);
-  }
-
-  const tenantDb = new TenantDB(createDbClient(supabaseUrl, supabaseKey), projectId);
-  
-  let targetHour = new Date().getUTCHours(); 
-  if (body.send_time) {
-    const d = new Date(body.send_time);
-    if (!isNaN(d.getTime())) {
-      targetHour = d.getHours();
-    }
-  }
-  
-  const result = await calculateProbability(tenantDb, body.to, body.subject, targetHour);
-  return c.json(result);
+const scoreSchema = z.object({
+  subject: z.string().min(1),
+  body: z.string().min(1),
 });
 
-ai.post('/score', async (c) => {
-  const { subject, html } = await c.req.json();
+ai.post('/score', zValidator('json', scoreSchema), async (c) => {
+  const { subject, body } = c.req.valid('json');
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
     return c.json({ error: 'ANTHROPIC_API_KEY not configured' }, 500);
   }
 
-  if (!subject || !html) {
-    return c.json({ error: 'Missing subject or html' }, 400);
-  }
-
   try {
-    const result = await getDeliverabilityScore(apiKey, subject, html);
+    const result = await getDeliverabilityScore(apiKey, subject, body);
     return c.json(result);
   } catch (error: any) {
-    console.error('AI scoring error:', error);
     return c.json({ error: error.message }, 500);
   }
 });
 
-ai.post('/improve', async (c) => {
-  const { subject, html } = await c.req.json();
+ai.post('/improve', zValidator('json', scoreSchema), async (c) => {
+  const { subject, body } = c.req.valid('json');
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
     return c.json({ error: 'ANTHROPIC_API_KEY not configured' }, 500);
   }
 
-  if (!subject || !html) {
-    return c.json({ error: 'Missing subject or html' }, 400);
-  }
-
   try {
-    const result = await improveEmailContent(apiKey, subject, html);
+    const result = await improveEmailContent(apiKey, subject, body);
     return c.json(result);
   } catch (error: any) {
-    console.error('AI improvement error:', error);
     return c.json({ error: error.message }, 500);
   }
 });
 
-ai.post('/sentiment', async (c) => {
-  const { content } = await c.req.json();
+ai.post('/sentiment', zValidator('json', z.object({ content: z.string().min(1) })), async (c) => {
+  const { content } = c.req.valid('json');
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
     return c.json({ error: 'ANTHROPIC_API_KEY not configured' }, 500);
-  }
-
-  if (!content) {
-    return c.json({ error: 'Missing content' }, 400);
   }
 
   try {
     const result = await analyzeSentiment(apiKey, content);
     return c.json(result);
   } catch (error: any) {
-    console.error('AI sentiment analysis error:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+ai.post('/predict', zValidator('json', z.object({ to: z.string().email(), subject: z.string().optional() })), async (c) => {
+  const { to, subject } = c.req.valid('json');
+  const projectId = c.get('projectId');
+  
+  const tenantDb = new TenantDB(getPrisma(), projectId);
+  const targetHour = new Date().getUTCHours(); 
+  
+  try {
+    const result = await calculateProbability(tenantDb, to, subject || '', targetHour);
+    return c.json(result);
+  } catch (error: any) {
     return c.json({ error: error.message }, 500);
   }
 });

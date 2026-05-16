@@ -4,10 +4,12 @@
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "worker:analytics": "bun src/workers/analytics-worker.ts",
+    "worker:copilot": "bun src/workers/copilot-worker.ts",
     "test": "bun test"
   },
   "dependencies": {
     "@flowmail/ai": "workspace:*",
+    "@flowmail/auth": "workspace:*",
     "@flowmail/db": "workspace:*",
     "@flowmail/email": "workspace:*",
     "@flowmail/shared": "workspace:*",

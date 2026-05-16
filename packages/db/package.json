@@ -4,7 +4,10 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "dependencies": {
+    "@better-auth/prisma-adapter": "^1.6.11",
+    "@prisma/client": "^7.8.0",
     "@supabase/supabase-js": "latest",
-    "dotenv": "latest"
+    "dotenv": "latest",
+    "prisma": "^7.8.0"
   }
 }

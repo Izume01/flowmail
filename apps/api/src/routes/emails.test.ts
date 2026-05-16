@@ -1,37 +1,45 @@
 import { describe, it, expect, vi, beforeEach } from 'bun:test';
 import { Hono } from 'hono';
 import emailsRouter from './emails';
-import * as db from '@flowmail/db';
 import * as email from '@flowmail/email';
 
 // Mocks
-const mockInsert = vi.fn();
+const mockFindUnique = vi.fn();
+const mockFindFirst = vi.fn();
+const mockFindMany = vi.fn();
+const mockCreate = vi.fn();
 const mockUpdate = vi.fn();
-const mockSelect = vi.fn();
-const mockEq = vi.fn();
-const mockSingle = vi.fn();
+const mockQueryRaw = vi.fn();
+const mockExecuteRaw = vi.fn();
 
-const mockFrom = vi.fn((table) => {
-  if (table === 'projects') {
-    return {
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: 'project-123' }, error: null }),
-    };
-  }
-  return {
-    insert: mockInsert,
+const mockPrisma = {
+  project: {
+    findUnique: mockFindUnique,
+  },
+  email: {
+    findFirst: mockFindFirst,
+    findMany: mockFindMany,
+    create: mockCreate,
     update: mockUpdate,
-    select: mockSelect,
-    eq: mockEq,
-    single: mockSingle,
-  };
-});
-const mockRpc = vi.fn();
-const mockDbClient = { from: mockFrom, rpc: mockRpc };
+  },
+  emailVariant: {
+    findMany: vi.fn(),
+  },
+  $queryRaw: mockQueryRaw,
+  $executeRaw: mockExecuteRaw,
+};
 
 vi.mock('@flowmail/db', () => ({
-  createDbClient: vi.fn(() => mockDbClient),
+  getPrisma: vi.fn(() => mockPrisma),
+  TenantDB: class {
+    constructor(public prisma: any, public projectId: string) {}
+    getEmails = vi.fn((limit) => this.prisma.email.findMany({ take: limit }));
+    isEmailSuppressed = vi.fn((email) => this.prisma.$queryRaw().then((res: any) => res[0]?.exists || false));
+    insertEmail = vi.fn((data) => this.prisma.email.create({ data }));
+    updateEmailStatus = vi.fn((id, status) => this.prisma.email.update({ where: { id }, data: { status } }));
+    getEmailVariants = vi.fn(() => this.prisma.emailVariant.findMany());
+    incrementVariantSends = vi.fn((id) => this.prisma.$executeRaw());
+  },
 }));
 
 vi.mock('@flowmail/email', () => ({
@@ -43,49 +51,31 @@ describe('emails router', () => {
   let app: Hono;
 
   beforeEach(() => {
-    process.env.SUPABASE_URL = 'http://localhost:54321';
-    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-key';
     process.env.AWS_REGION = 'us-east-1';
     process.env.AWS_ACCESS_KEY_ID = 'test-id';
     process.env.AWS_SECRET_ACCESS_KEY = 'test-secret';
 
     app = new Hono();
-    // In actual app, we'd mount this at /emails
-    // For test, we mount it at root or use the router directly
     app.route('/', emailsRouter);
 
-    mockInsert.mockReset();
-    mockInsert.mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: 'email-123' }, error: null })
-    });
-    mockUpdate.mockReset();
-    mockUpdate.mockReturnValue({
-      eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: 'email-123' }, error: null })
-    });
-    mockRpc.mockReset();
-    (email.sendEmail as any).mockReset();
+    vi.clearAllMocks();
+    
+    // Default mock for API key auth (in apiKeyAuth middleware)
+    mockFindUnique.mockResolvedValue({ id: 'project-123' });
   });
 
   it('should send email and update database successfully', async () => {
-    // Mock DB rpc (not suppressed)
-    mockRpc.mockResolvedValue({ data: false, error: null });
+    // Mock DB isEmailSuppressed (via $queryRaw)
+    mockQueryRaw.mockResolvedValue([{ exists: false }]);
 
-    // Mock DB insert
-    mockInsert.mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: 'email-123' }, error: null })
-    });
+    // Mock DB insertEmail (via prisma.email.create)
+    mockCreate.mockResolvedValue({ id: 'email-123' });
 
     // Mock Email send
     (email.sendEmail as any).mockResolvedValue({ MessageId: 'msg-123' });
 
-    // Mock DB update
-    mockUpdate.mockReturnValue({
-      eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: 'email-123', status: 'sent' }, error: null })
-    });
+    // Mock DB updateEmailStatus (via prisma.email.update)
+    mockUpdate.mockResolvedValue({ id: 'email-123', status: 'sent' });
 
     const res = await app.request('/', {
       method: 'POST',
@@ -106,14 +96,16 @@ describe('emails router', () => {
     expect(data.id).toBe('email-123');
     expect(data.status).toBe('sent');
 
-    expect(mockInsert).toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalled();
     expect(email.sendEmail).toHaveBeenCalled();
-    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ status: 'sent' }));
+    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: { status: 'sent' }
+    }));
   });
 
   it('should return 403 Forbidden if the email is suppressed', async () => {
-    // Mock DB rpc (is suppressed)
-    mockRpc.mockResolvedValue({ data: true, error: null });
+    // Mock DB isEmailSuppressed (via $queryRaw)
+    mockQueryRaw.mockResolvedValue([{ exists: true }]);
 
     const res = await app.request('/', {
       method: 'POST',
@@ -132,16 +124,12 @@ describe('emails router', () => {
     expect(res.status).toBe(403);
     const data = await res.json();
     expect(data.error).toBe('Email is suppressed');
-    expect(mockRpc).toHaveBeenCalledWith('is_email_suppressed', {
-      p_project_id: 'project-123',
-      p_email: 'suppressed@example.com'
-    });
     expect(email.sendEmail).not.toHaveBeenCalled();
   });
 
   it('should return 500 if the suppression check fails', async () => {
-    // Mock DB rpc error
-    mockRpc.mockResolvedValue({ data: null, error: new Error('DB Error') });
+    // Mock DB queryRaw error
+    mockQueryRaw.mockRejectedValue(new Error('DB Error'));
 
     const res = await app.request('/', {
       method: 'POST',
@@ -163,23 +151,17 @@ describe('emails router', () => {
   });
 
   it('should handle email sending failure', async () => {
-    // Mock DB rpc (not suppressed)
-    mockRpc.mockResolvedValue({ data: false, error: null });
+    // Mock DB isEmailSuppressed
+    mockQueryRaw.mockResolvedValue([{ exists: false }]);
 
-    // Mock DB insert
-    mockInsert.mockReturnValue({
-      select: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: 'email-123' }, error: null })
-    });
+    // Mock DB insertEmail
+    mockCreate.mockResolvedValue({ id: 'email-123' });
 
     // Mock Email send failure
     (email.sendEmail as any).mockRejectedValue(new Error('SES Error'));
 
     // Mock DB update for failure
-    mockUpdate.mockReturnValue({
-      eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: 'email-123', status: 'failed' }, error: null })
-    });
+    mockUpdate.mockResolvedValue({ id: 'email-123', status: 'failed' });
 
     const res = await app.request('/', {
       method: 'POST',
@@ -200,7 +182,9 @@ describe('emails router', () => {
     expect(data.status).toBe('failed');
     expect(data.success).toBe(false);
     
-    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }));
+    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: { status: 'failed' }
+    }));
   });
 
   it('should return 400 for invalid input', async () => {

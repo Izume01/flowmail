@@ -1,11 +1,18 @@
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
 import { render } from "@react-email/render";
 import * as React from "react";
+import { z } from "zod";
 
 /**
  * Initialize SES Client
  */
 export const createEmailClient = (region: string, accessKeyId: string, secretAccessKey: string) => {
+  z.object({
+    region: z.string().min(1),
+    accessKeyId: z.string().min(1),
+    secretAccessKey: z.string().min(1),
+  }).parse({ region, accessKeyId, secretAccessKey });
+
   return new SESClient({
     region,
     credentials: { accessKeyId, secretAccessKey },
@@ -16,6 +23,9 @@ export const createEmailClient = (region: string, accessKeyId: string, secretAcc
  * Render a React Email template to HTML
  */
 export const renderTemplate = async (component: React.ReactElement): Promise<string> => {
+  if (!component) {
+    throw new Error("React component is required for rendering");
+  }
   return render(component);
 };
 
@@ -30,6 +40,18 @@ export const sendEmail = async (
   html?: string,
   text?: string
 ) => {
+  z.object({
+    from: z.string().email(),
+    to: z.string().email(),
+    subject: z.string().min(1),
+    html: z.string().optional(),
+    text: z.string().optional(),
+  }).parse({ from, to, subject, html, text });
+
+  if (!client) {
+    throw new Error("SES Client is required");
+  }
+
   const command = new SendEmailCommand({
     Destination: { ToAddresses: [to] },
     Message: {

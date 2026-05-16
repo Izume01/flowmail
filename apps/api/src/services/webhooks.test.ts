@@ -1,48 +1,30 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, vi, beforeEach } from 'bun:test';
 import { dispatchWebhookEvent } from './webhooks';
-import { createDbClient } from '@flowmail/db';
-import { createHmac } from 'crypto';
+import { getPrisma } from '@flowmail/db';
+import { generateWebhookSignature } from '@flowmail/shared';
+
+// Mock DNS
+vi.mock('dns/promises', () => ({
+  resolve4: vi.fn(async (hostname: string) => {
+    if (hostname === 'localhost' || hostname === '127.0.0.1') return ['127.0.0.1'];
+    if (hostname === '169.254.169.254') return ['169.254.169.254'];
+    if (hostname === '192.168.1.1') return ['192.168.1.1'];
+    return ['93.184.216.34']; // example.com
+  }),
+}));
 
 // Mocks
-const mockInsert = vi.fn().mockReturnThis();
-const mockUpdate = vi.fn().mockReturnThis();
-const mockSelect = vi.fn().mockReturnThis();
-const mockSingle = vi.fn().mockResolvedValue({ data: { id: 'delivery-123' }, error: null });
-const mockEq = vi.fn().mockReturnThis();
-
-const mockConfigs = [
-  {
-    id: 'config-1',
-    url: 'https://webhook.site/1',
-    secret_key: 'secret-1',
-    is_active: true
-  }
-];
-
-const mockFrom = vi.fn((table) => {
-  if (table === 'webhook_configs') {
-    return {
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      then: (callback: any) => callback({ data: mockConfigs, error: null })
-    };
-  }
-  if (table === 'webhook_deliveries') {
-    return {
-      insert: mockInsert,
-      select: mockSelect,
-      single: mockSingle,
-      update: mockUpdate,
-      eq: mockEq
-    };
-  }
-  return {};
-});
-
-const mockDbClient = { from: mockFrom };
+const mockPrisma = {
+  webhookConfig: {
+    findMany: vi.fn(),
+  },
+  webhookDelivery: {
+    create: vi.fn(),
+  },
+};
 
 vi.mock('@flowmail/db', () => ({
-  createDbClient: vi.fn(() => mockDbClient),
+  getPrisma: vi.fn(() => mockPrisma),
 }));
 
 // Mock fetch
@@ -51,9 +33,16 @@ global.fetch = mockFetch;
 
 describe('Webhook Service', () => {
   beforeEach(() => {
-    process.env.SUPABASE_URL = 'http://localhost:54321';
-    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-key';
     vi.clearAllMocks();
+    mockPrisma.webhookConfig.findMany.mockResolvedValue([
+      {
+        id: 'config-1',
+        url: 'https://webhook.site/1',
+        secretKey: 'secret-1',
+        isActive: true
+      }
+    ]);
+    mockPrisma.webhookDelivery.create.mockResolvedValue({ id: 'delivery-123' });
   });
 
   it('should dispatch webhook event and record delivery', async () => {
@@ -64,122 +53,58 @@ describe('Webhook Service', () => {
     await dispatchWebhookEvent(projectId, type, payload);
 
     // Verify configs fetch
-    expect(mockFrom).toHaveBeenCalledWith('webhook_configs');
-    
-    // Verify insert delivery
-    expect(mockFrom).toHaveBeenCalledWith('webhook_deliveries');
-    expect(mockInsert).toHaveBeenCalledWith(expect.objectContaining({
-      event_type: type,
-      attempts: 1
+    expect(mockPrisma.webhookConfig.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { projectId, isActive: true }
     }));
-
+    
     // Verify fetch call
     expect(mockFetch).toHaveBeenCalled();
     const [url, options] = mockFetch.mock.calls[0];
     expect(url).toBe('https://webhook.site/1');
     expect(options.method).toBe('POST');
     expect(options.headers).toHaveProperty('X-FlowMail-Signature');
-    expect(options.headers).not.toHaveProperty('X-FlowMail-Timestamp');
 
-    // Verify signature format (t=...,v1=...)
+    // Verify signature
     const signature = options.headers['X-FlowMail-Signature'];
-    expect(signature).toMatch(/^t=\d+,v1=[a-f0-9]{64}$/);
+    const expectedSignature = generateWebhookSignature(JSON.stringify(payload), 'secret-1');
+    expect(signature).toBe(expectedSignature);
 
-    const parts = signature.split(',');
-    const timestamp = parts[0].substring(2);
-    const sigValue = parts[1].substring(3);
-    const body = options.body;
-    
-    const expectedSignature = createHmac('sha256', 'secret-1')
-      .update(`${timestamp}.${body}`)
-      .digest('hex');
-    expect(sigValue).toBe(expectedSignature);
-
-    // Verify update delivery status
-    expect(mockUpdate).toHaveBeenCalledWith({ status_code: 200 });
+    // Verify insert delivery
+    expect(mockPrisma.webhookDelivery.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        webhookConfigId: 'config-1',
+        eventType: type,
+        statusCode: 200
+      })
+    }));
   });
 
   it('should not dispatch if no active configs', async () => {
-    // Mock no configs
-    mockFrom.mockImplementationOnce((table) => {
-      if (table === 'webhook_configs') {
-        return {
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          then: (callback: any) => callback({ data: [], error: null })
-        };
-      }
-      return {};
-    });
+    mockPrisma.webhookConfig.findMany.mockResolvedValueOnce([]);
 
     await dispatchWebhookEvent('p1', 'type', {});
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('should block webhooks to local or private IPs (SSRF protection)', async () => {
-    const unsafeConfigs = [
-      { id: 'c1', url: 'http://localhost/hit', secret_key: 's1', is_active: true },
-      { id: 'c2', url: 'http://127.0.0.1/hit', secret_key: 's2', is_active: true },
-      { id: 'c3', url: 'http://169.254.169.254/latest/meta-data/', secret_key: 's3', is_active: true },
-      { id: 'c4', url: 'http://192.168.1.1/admin', secret_key: 's4', is_active: true },
-    ];
-
-    // Mock configs fetch returning unsafe ones
-    mockFrom.mockImplementation((table) => {
-      if (table === 'webhook_configs') {
-        return {
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          then: (callback: any) => callback({ data: unsafeConfigs, error: null })
-        };
-      }
-      if (table === 'webhook_deliveries') {
-        return {
-          insert: mockInsert,
-          select: mockSelect,
-          single: mockSingle,
-          update: mockUpdate,
-          eq: mockEq
-        };
-      }
-      return {};
-    });
+    mockPrisma.webhookConfig.findMany.mockResolvedValue([
+      { id: 'c1', url: 'http://localhost/hit', secretKey: 's1', isActive: true },
+      { id: 'c2', url: 'http://127.0.0.1/hit', secretKey: 's2', isActive: true },
+      { id: 'c3', url: 'http://169.254.169.254/latest/meta-data/', secretKey: 's3', isActive: true },
+      { id: 'c4', url: 'http://192.168.1.1/admin', secretKey: 's4', isActive: true },
+    ]);
 
     await dispatchWebhookEvent('project-123', 'test.event', {});
 
     // Should NOT have called fetch for any of these
     expect(mockFetch).not.toHaveBeenCalled();
-    
-    // Should still have recorded "failed" deliveries (status_code 403 or similar, or just not updated)
-    // Actually, according to the plan: "log a delivery failure and continue"
-    // We should probably mark them with a specific status code if we block them.
   });
 
   it('should allow webhooks to valid external URLs', async () => {
-    const validConfigs = [
-      { id: 'c1', url: 'https://api.github.com/webhook', secret_key: 's1', is_active: true },
-      { id: 'c2', url: 'https://hooks.slack.com/services/xxx', secret_key: 's2', is_active: true },
-    ];
-
-    mockFrom.mockImplementation((table) => {
-      if (table === 'webhook_configs') {
-        return {
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          then: (callback: any) => callback({ data: validConfigs, error: null })
-        };
-      }
-      if (table === 'webhook_deliveries') {
-        return {
-          insert: mockInsert,
-          select: mockSelect,
-          single: mockSingle,
-          update: mockUpdate,
-          eq: mockEq
-        };
-      }
-      return {};
-    });
+    mockPrisma.webhookConfig.findMany.mockResolvedValue([
+      { id: 'c1', url: 'https://api.github.com/webhook', secretKey: 's1', isActive: true },
+      { id: 'c2', url: 'https://hooks.slack.com/services/xxx', secretKey: 's2', isActive: true },
+    ]);
 
     await dispatchWebhookEvent('project-123', 'test.event', {});
 

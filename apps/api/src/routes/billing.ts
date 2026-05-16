@@ -1,134 +1,92 @@
 import { Hono } from 'hono';
 import Stripe from 'stripe';
-import { createDbClient } from '@flowmail/db';
+import { getPrisma, TenantDB } from '@flowmail/db';
+import { apiKeyAuth } from '../middleware/auth';
 
-const billing = new Hono();
+const billing = new Hono<{
+  Variables: {
+    projectId: string;
+  };
+}>();
 
-// Initialize Stripe with secret key from environment
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-02-24-preview',
 });
 
-/**
- * Create a Stripe Checkout session for a subscription plan.
- * POST /billing/create-checkout-session
- */
-billing.post('/create-checkout-session', async (c) => {
-  const { projectId, plan } = await c.req.json();
-  
-  if (!projectId || !plan) {
-    return c.json({ error: 'Missing projectId or plan' }, 400);
-  }
+billing.get('/plan', apiKeyAuth, async (c) => {
+  const projectId = c.get('projectId');
+  const tenantDb = new TenantDB(getPrisma(), projectId);
 
-  // Map plan names to Stripe Price IDs
-  // In production, these should be environment variables
+  try {
+    const project = await tenantDb.getProject();
+    if (!project) return c.json({ error: 'Project not found' }, 404);
+    return c.json({ plan: project.plan });
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+billing.post('/create-checkout-session', apiKeyAuth, async (c) => {
+  const { plan } = await c.req.json();
+  const projectId = c.get('projectId');
+  
   const priceIds: Record<string, string | undefined> = {
     growth: process.env.STRIPE_GROWTH_PRICE_ID,
     scale: process.env.STRIPE_SCALE_PRICE_ID,
   };
 
   const priceId = priceIds[plan];
-  if (!priceId) {
-    return c.json({ error: `Invalid plan or price ID not configured for: ${plan}` }, 400);
-  }
+  if (!priceId) return c.json({ error: `Invalid plan or price ID not configured for: ${plan}` }, 400);
+
+  const prisma = getPrisma();
 
   try {
+    const project = await prisma.project.findUnique({ where: { id: projectId } });
+    if (!project) return c.json({ error: 'Project not found' }, 404);
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1,
-        },
-      ],
+      line_items: [{ price: priceId, quantity: 1 }],
       mode: 'subscription',
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/billing?success=true&session_id={CHECKOUT_SESSION_ID}`,
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/billing?success=true`,
       cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/billing?canceled=true`,
-      metadata: {
-        projectId,
-        plan,
-      },
+      customer: project.stripeCustomerId || undefined,
+      client_reference_id: projectId,
+      metadata: { projectId, plan },
     });
 
     return c.json({ url: session.url });
-  } catch (error: any) {
-    console.error('Stripe error:', error);
-    return c.json({ error: error.message }, 500);
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
   }
 });
 
-/**
- * Stripe Webhook handler to process events from Stripe.
- * POST /billing/webhook
- */
 billing.post('/webhook', async (c) => {
-  const sig = c.req.header('stripe-signature');
-  const body = await c.req.text();
-  
-  if (!sig) {
-    return c.json({ error: 'Missing stripe-signature' }, 400);
-  }
+  const sig = c.req.header('stripe-signature')!;
+  const body = await c.req.raw.text();
 
-  let event: Stripe.Event;
-
+  let event;
   try {
-    event = stripe.webhooks.constructEvent(
-      body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET!
-    );
+    event = stripe.webhooks.constructEvent(body, sig, process.env.STRIPE_WEBHOOK_SECRET!);
   } catch (err: any) {
-    console.error(`Webhook signature verification failed: ${err.message}`);
     return c.json({ error: `Webhook Error: ${err.message}` }, 400);
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL!;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  const supabase = createDbClient(supabaseUrl, supabaseKey);
+  const prisma = getPrisma();
 
-  // Handle the event
-  switch (event.type) {
-    case 'checkout.session.completed': {
-      const session = event.data.object as Stripe.Checkout.Session;
-      const { projectId, plan } = session.metadata || {};
-      const stripeCustomerId = session.customer as string;
-      const stripeSubscriptionId = session.subscription as string;
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const projectId = session.client_reference_id!;
+    const plan = session.metadata?.plan;
 
-      if (projectId) {
-        const { error } = await supabase
-          .from('projects')
-          .update({
-            stripe_customer_id: stripeCustomerId,
-            stripe_subscription_id: stripeSubscriptionId,
-            plan: plan || 'growth',
-          })
-          .eq('id', projectId);
-        
-        if (error) {
-          console.error('Failed to update project billing info:', error);
-        }
-      }
-      break;
-    }
-
-    case 'customer.subscription.deleted': {
-      const subscription = event.data.object as Stripe.Subscription;
-      const { error } = await supabase
-        .from('projects')
-        .update({
-          plan: 'free',
-          stripe_subscription_id: null,
-        })
-        .eq('stripe_subscription_id', subscription.id);
-      
-      if (error) {
-        console.error('Failed to handle subscription deletion:', error);
-      }
-      break;
-    }
-
-    default:
-      console.log(`Unhandled event type ${event.type}`);
+    await prisma.project.update({
+      where: { id: projectId },
+      data: {
+        plan,
+        stripeCustomerId: session.customer as string,
+        stripeSubscriptionId: session.subscription as string,
+      },
+    });
   }
 
   return c.json({ received: true });

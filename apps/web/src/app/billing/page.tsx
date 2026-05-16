@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { createDbClient } from '@flowmail/db';
 
 export default function BillingPage() {
   const [currentPlan, setCurrentPlan] = useState<string>('free');
@@ -10,16 +9,12 @@ export default function BillingPage() {
   useEffect(() => {
     async function fetchPlan() {
       try {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-        const supabase = createDbClient(supabaseUrl, supabaseKey);
+        const response = await fetch('/api/billing/plan');
+        const data = await response.json();
 
-        const { data } = await supabase
-          .from('projects')
-          .select('plan')
-          .single();
-
-        if (data) setCurrentPlan(data.plan || 'free');
+        if (data && data.plan) {
+          setCurrentPlan(data.plan);
+        }
       } catch (e) {
         console.error('Failed to fetch plan');
       } finally {

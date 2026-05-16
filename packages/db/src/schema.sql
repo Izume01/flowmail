@@ -99,7 +99,7 @@ CREATE TABLE flow_executions (
 );
 
 -- RPC Functions for tracking
-CREATE OR REPLACE FUNCTION increment_opens(email_id UUID, user_timezone TEXT DEFAULT 'UTC')
+CREATE OR REPLACE FUNCTION increment_opens(p_project_id UUID, email_id UUID, user_timezone TEXT DEFAULT 'UTC')
 RETURNS void AS $$
 DECLARE
   v_id UUID;
@@ -117,44 +117,44 @@ BEGIN
   SET 
     opens = COALESCE(opens, 0) + 1,
     local_open_hour = v_local_hour
-  WHERE id = email_id
+  WHERE id = email_id AND project_id = p_project_id
   RETURNING variant_id INTO v_id;
 
   -- Update variant stats if exists
   IF v_id IS NOT NULL THEN
-    PERFORM increment_variant_opens(v_id);
+    PERFORM increment_variant_opens(p_project_id, v_id);
   END IF;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION increment_clicks(email_id UUID)
+CREATE OR REPLACE FUNCTION increment_clicks(p_project_id UUID, email_id UUID)
 RETURNS void AS $$
 BEGIN
   UPDATE emails
   SET clicks = COALESCE(clicks, 0) + 1
-  WHERE id = email_id;
+  WHERE id = email_id AND project_id = p_project_id;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION increment_variant_sends(variant_id UUID)
+CREATE OR REPLACE FUNCTION increment_variant_sends(p_project_id UUID, variant_id UUID)
 RETURNS void AS $$
 BEGIN
   UPDATE email_variants
   SET sends = COALESCE(sends, 0) + 1
-  WHERE id = variant_id;
+  WHERE id = variant_id AND project_id = p_project_id;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION increment_variant_opens(variant_id UUID)
+CREATE OR REPLACE FUNCTION increment_variant_opens(p_project_id UUID, variant_id UUID)
 RETURNS void AS $$
 BEGIN
   UPDATE email_variants
   SET opens = COALESCE(opens, 0) + 1
-  WHERE id = variant_id;
+  WHERE id = variant_id AND project_id = p_project_id;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION bulk_increment_stats(p_email_id UUID, p_opens INTEGER, p_clicks INTEGER)
+CREATE OR REPLACE FUNCTION bulk_increment_stats(p_project_id UUID, p_email_id UUID, p_opens INTEGER, p_clicks INTEGER)
 RETURNS VOID AS $$
 DECLARE
   v_variant_id UUID;
@@ -163,13 +163,13 @@ BEGIN
   SET 
     opens = COALESCE(opens, 0) + p_opens,
     clicks = COALESCE(clicks, 0) + p_clicks
-  WHERE id = p_email_id
+  WHERE id = p_email_id AND project_id = p_project_id
   RETURNING variant_id INTO v_variant_id;
 
   IF v_variant_id IS NOT NULL AND p_opens > 0 THEN
     UPDATE email_variants
     SET opens = COALESCE(opens, 0) + p_opens
-    WHERE id = v_variant_id;
+    WHERE id = v_variant_id AND project_id = p_project_id;
   END IF;
 END;
 $$ LANGUAGE plpgsql;

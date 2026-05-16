@@ -30,13 +30,34 @@ def handler(event, context):
         recipient_history = body.get('recipient_history', [])
         current_day = body.get('current_day_of_week', 0)
         
+        # Validation
+        if not isinstance(recipient_history, list):
+            return {
+                'statusCode': 400,
+                'body': json.dumps({'error': 'recipient_history must be a list'})
+            }
+        
+        if not isinstance(current_day, int) or not (0 <= current_day <= 6):
+            return {
+                'statusCode': 400,
+                'body': json.dumps({'error': 'current_day_of_week must be an integer between 0 and 6'})
+            }
+
         # Check if model exists
         if os.path.exists(MODEL_PATH) and os.path.getsize(MODEL_PATH) > 100: # Simple check for non-dummy
             try:
-                model = lgb.Booster(model_file=MODEL_PATH)
-                best_hour = predict_with_model(model, recipient_history, current_day)
+                try:
+                    model = lgb.Booster(model_file=MODEL_PATH)
+                except Exception as e:
+                    raise RuntimeError(f"Model loading failed: {e}")
+                
+                try:
+                    best_hour = predict_with_model(model, recipient_history, current_day)
+                except Exception as e:
+                    raise RuntimeError(f"Model inference failed: {e}")
+                
             except Exception as e:
-                print(f"Error loading model: {e}. Falling back to statistical baseline.")
+                print(f"STO Error: {e}. Falling back to statistical baseline.")
                 best_hour = predict_fallback(recipient_history)
         else:
             print("Model file missing or empty. Using statistical fallback.")

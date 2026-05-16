@@ -1,0 +1,10 @@
+{
+  "name": "@flowmail/auth",
+  "version": "0.0.0",
+  "main": "src/index.ts",
+  "dependencies": {
+    "better-auth": "latest",
+    "@better-auth/prisma-adapter": "latest",
+    "@flowmail/db": "workspace:*"
+  }
+}

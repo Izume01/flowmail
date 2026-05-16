@@ -1,5 +1,5 @@
 import { serve } from "@upstash/workflow/hono";
-import { createDbClient, TenantDB } from "@flowmail/db";
+import { getPrisma, TenantDB } from "@flowmail/db";
 import { createEmailClient, sendEmail } from "@flowmail/email";
 import { getBestSendTime } from "../services/sto";
 
@@ -36,17 +36,14 @@ const calculateSleepUntilHour = (targetHour: number, timezone: string = 'UTC'): 
 export const flowWorkflow = serve<WorkflowPayload>(async (context) => {
   const { flowId, projectId, initialData } = context.requestPayload;
   
-  const supabaseUrl = process.env.SUPABASE_URL!;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  const tenantDb = new TenantDB(createDbClient(supabaseUrl, supabaseKey), projectId);
+  const tenantDb = new TenantDB(getPrisma(), projectId);
 
   // 1. Fetch flow from DB
   const flow = await context.run("fetch-flow", async () => {
-    const { data, error } = await tenantDb.getFlow(flowId);
+    const flow = await tenantDb.getFlow(flowId);
     
-    if (error) throw new Error(`Failed to fetch flow: ${error.message}`);
-    if (!data) throw new Error(`Flow not found: ${flowId}`);
-    return data;
+    if (!flow) throw new Error(`Flow not found: ${flowId}`);
+    return flow;
   });
 
   const { nodes, edges } = flow.graph as { nodes: any[], edges: any[] };
@@ -95,9 +92,9 @@ export const flowWorkflow = serve<WorkflowPayload>(async (context) => {
           const executionId = context.headers.get("Upstash-Message-Id") || context.workflowRunId;
           const idempotencyKey = `flow_${flowId}_node_${node.id}_exec_${executionId}`;
 
-          const { error: idempError } = await tenantDb.insertIdempotencyKey(idempotencyKey);
-
-          if (idempError) {
+          try {
+            await tenantDb.insertIdempotencyKey(idempotencyKey);
+          } catch (err) {
             console.warn(`Duplicate execution detected for key: ${idempotencyKey}. Skipping.`);
             return;
           }

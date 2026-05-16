@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { z } from 'zod';
 
 export interface DeliverabilityResult {
   score: number;
@@ -23,11 +24,39 @@ export interface SentimentResult {
   intent: string;
 }
 
+export interface FlowPerformanceSuggestion {
+  node_id?: string;
+  content: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
+export interface FlowPerformanceResult {
+  suggestions: FlowPerformanceSuggestion[];
+}
+
+const aiRequestSchema = z.object({
+  apiKey: z.string().min(1, 'Anthropic API Key is required'),
+  subject: z.string().min(1, 'Subject is required'),
+  body: z.string().min(1, 'Body is required'),
+});
+
+const performanceRequestSchema = z.object({
+  apiKey: z.string().min(1, 'Anthropic API Key is required'),
+  flowName: z.string().min(1, 'Flow name is required'),
+  stats: z.any(),
+});
+
+const sentimentRequestSchema = z.object({
+  apiKey: z.string().min(1, 'Anthropic API Key is required'),
+  content: z.string().min(1, 'Content is required'),
+});
+
 export const getDeliverabilityScore = async (
   apiKey: string,
   subject: string,
   body: string
 ): Promise<DeliverabilityResult> => {
+  aiRequestSchema.parse({ apiKey, subject, body });
   const anthropic = new Anthropic({ apiKey });
 
   const response = await anthropic.messages.create({
@@ -47,7 +76,7 @@ export const getDeliverabilityScore = async (
   });
 
   const content = response.content[0];
-  if (content.type !== 'text') {
+  if (!content || content.type !== 'text') {
     throw new Error('Unexpected response content type from Anthropic');
   }
 
@@ -64,6 +93,7 @@ export const improveEmailContent = async (
   subject: string,
   body: string
 ): Promise<ImprovementResult> => {
+  aiRequestSchema.parse({ apiKey, subject, body });
   const anthropic = new Anthropic({ apiKey });
 
   const response = await anthropic.messages.create({
@@ -83,7 +113,7 @@ export const improveEmailContent = async (
   });
 
   const content = response.content[0];
-  if (content.type !== 'text') {
+  if (!content || content.type !== 'text') {
     throw new Error('Unexpected response content type from Anthropic');
   }
 
@@ -99,6 +129,11 @@ export const generateFlowGraph = async (
   apiKey: string,
   prompt: string
 ): Promise<FlowGraphResult> => {
+  z.object({
+    apiKey: z.string().min(1, 'Anthropic API Key is required'),
+    prompt: z.string().min(1, 'Prompt is required'),
+  }).parse({ apiKey, prompt });
+  
   const anthropic = new Anthropic({ apiKey });
 
   const response = await anthropic.messages.create({
@@ -124,7 +159,7 @@ Output ONLY a valid JSON object with { "nodes": [], "edges": [] }.`,
   });
 
   const content = response.content[0];
-  if (content.type !== 'text') {
+  if (!content || content.type !== 'text') {
     throw new Error('Unexpected response content type from Anthropic');
   }
 
@@ -140,6 +175,7 @@ export const analyzeSentiment = async (
   apiKey: string,
   content: string
 ): Promise<SentimentResult> => {
+  sentimentRequestSchema.parse({ apiKey, content });
   const anthropic = new Anthropic({ apiKey });
 
   const response = await anthropic.messages.create({
@@ -158,7 +194,7 @@ export const analyzeSentiment = async (
   });
 
   const messageContent = response.content[0];
-  if (messageContent.type !== 'text') {
+  if (!messageContent || messageContent.type !== 'text') {
     throw new Error('Unexpected response content type from Anthropic');
   }
 
@@ -167,5 +203,58 @@ export const analyzeSentiment = async (
   } catch (error) {
     console.error('Failed to parse AI response:', messageContent.text);
     throw new Error('Failed to parse AI sentiment analysis');
+  }
+};
+
+export const analyzeFlowPerformance = async (
+  apiKey: string,
+  flowName: string,
+  stats: any
+): Promise<FlowPerformanceResult> => {
+  performanceRequestSchema.parse({ apiKey, flowName, stats });
+  const anthropic = new Anthropic({ apiKey });
+
+  const response = await anthropic.messages.create({
+    model: 'claude-3-5-sonnet-20240620',
+    max_tokens: 1500,
+    messages: [
+      {
+        role: 'user',
+        content: `Analyze this automated email flow performance data.
+      Flow: ${flowName}
+      Stats: ${JSON.stringify(stats)}
+      
+      Your goal is to identify points of failure and opportunities for optimization. 
+      Focus on:
+      - Where users are dropping off (conversion gaps between nodes).
+      - Underperforming subject lines (low open rates).
+      - Ineffective delays (e.g., too short/long for the specific context).
+      - Structural improvements (e.g., adding condition branches for unengaged users).
+      
+      Provide actionable suggestions. Each suggestion should link to a specific node if possible.
+      
+      Return ONLY a valid JSON object with the following structure:
+      { 
+        "suggestions": [
+          { "node_id": "optional_string", "content": "detailed suggestion", "priority": "high" | "medium" | "low" }
+        ] 
+      }`,
+      },
+    ],
+  });
+
+  const content = response.content[0];
+  if (!content || content.type !== 'text') {
+    throw new Error('Unexpected response content type from Anthropic');
+  }
+
+  try {
+    // Try to find JSON in the response if there's any preamble
+    const jsonMatch = content.text.match(/\{[\s\S]*\}/);
+    const jsonString = jsonMatch ? jsonMatch[0] : content.text;
+    return JSON.parse(jsonString) as FlowPerformanceResult;
+  } catch (error) {
+    console.error('Failed to parse AI response:', content.text);
+    throw new Error('Failed to parse AI flow performance analysis');
   }
 };

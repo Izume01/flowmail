@@ -1,52 +1,55 @@
 import { describe, it, expect, vi, beforeEach } from 'bun:test';
 import { Hono } from 'hono';
+import audienceRouter from './audience';
 
-// Mock DB Client and TenantDB
-const mockTenantDb = {
-  upsertContact: vi.fn(),
-  insertUserEvent: vi.fn(),
-  getFlowsByTrigger: vi.fn(),
-  createSegment: vi.fn(),
-  getSegment: vi.fn(),
-  executeRawQuery: vi.fn(),
+// Mocks
+const mockFindUnique = vi.fn();
+
+const mockPrisma = {
+  project: {
+    findUnique: mockFindUnique,
+  },
 };
 
-const mockFrom = vi.fn((table) => {
-  if (table === 'projects') {
-    return {
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: 'project-123' }, error: null }),
-    };
-  }
-  return {};
-});
-
-const mockDbClient = { from: mockFrom };
+const mockUpsertContact = vi.fn();
+const mockInsertUserEvent = vi.fn();
+const mockGetFlowsByTrigger = vi.fn();
+const mockCreateSegment = vi.fn();
+const mockGetSegment = vi.fn();
+const mockExecuteRawQuery = vi.fn();
 
 vi.mock('@flowmail/db', () => ({
-  createDbClient: vi.fn(() => mockDbClient),
-  TenantDB: vi.fn(() => mockTenantDb)
+  getPrisma: vi.fn(() => mockPrisma),
+  TenantDB: class {
+    constructor(public prisma: any, public projectId: string) {}
+    upsertContact = mockUpsertContact;
+    insertUserEvent = mockInsertUserEvent;
+    getFlowsByTrigger = mockGetFlowsByTrigger;
+    createSegment = mockCreateSegment;
+    getSegment = mockGetSegment;
+    executeRawQuery = mockExecuteRawQuery;
+  },
+  SegmentEvaluator: {
+    generateSql: vi.fn(() => 'SELECT * FROM contacts'),
+  }
 }));
-
-import audienceRouter from './audience';
 
 describe('audience router', () => {
   let app: Hono;
 
   beforeEach(() => {
-    process.env.SUPABASE_URL = 'http://localhost:54321';
-    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-key';
-
     vi.clearAllMocks();
     
     app = new Hono();
     app.route('/audience', audienceRouter);
+
+    // Default mock for API key auth
+    mockFindUnique.mockResolvedValue({ id: 'project-123' });
   });
 
   describe('POST /identify', () => {
     it('should upsert a contact', async () => {
-      mockTenantDb.upsertContact.mockResolvedValue({ data: { id: 'contact-1', email: 'test@example.com' }, error: null });
+      mockUpsertContact.mockResolvedValue({ id: 'contact-1', email: 'test@example.com' });
 
       const res = await app.request('/audience/identify', {
         method: 'POST',
@@ -60,7 +63,7 @@ describe('audience router', () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data).toEqual({ id: 'contact-1', email: 'test@example.com' });
-      expect(mockTenantDb.upsertContact).toHaveBeenCalledWith('test@example.com', 'John', undefined, { role: 'admin' });
+      expect(mockUpsertContact).toHaveBeenCalledWith('test@example.com', 'John', undefined, { role: 'admin' });
     });
 
     it('should return 400 for invalid payload', async () => {
@@ -79,9 +82,8 @@ describe('audience router', () => {
 
   describe('POST /track', () => {
     it('should track an event and upsert contact if needed', async () => {
-      mockTenantDb.upsertContact.mockResolvedValue({ data: { id: 'contact-1', email: 'test@example.com' }, error: null });
-      mockTenantDb.insertUserEvent.mockResolvedValue({ data: { id: 'event-1' }, error: null });
-      mockTenantDb.getFlowsByTrigger.mockResolvedValue({ data: [], error: null });
+      mockUpsertContact.mockResolvedValue({ id: 'contact-1', email: 'test@example.com' });
+      mockInsertUserEvent.mockResolvedValue({ id: 'event-1' });
 
       const res = await app.request('/audience/track', {
         method: 'POST',
@@ -93,8 +95,10 @@ describe('audience router', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(mockTenantDb.upsertContact).toHaveBeenCalledWith('test@example.com');
-      expect(mockTenantDb.insertUserEvent).toHaveBeenCalledWith('contact-1', 'button_clicked', { button: 'signup' });
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(mockUpsertContact).toHaveBeenCalledWith('test@example.com');
+      expect(mockInsertUserEvent).toHaveBeenCalledWith('contact-1', 'button_clicked', { button: 'signup' });
     });
   });
 });

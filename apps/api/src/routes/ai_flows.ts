@@ -1,7 +1,10 @@
 import { Hono } from 'hono';
 import { generateFlowGraph } from '@flowmail/ai';
+import { apiKeyAuth } from '../middleware/auth';
 
 const aiFlows = new Hono();
+
+aiFlows.use('*', apiKeyAuth);
 
 aiFlows.post('/generate', async (c) => {
   const { prompt } = await c.req.json();

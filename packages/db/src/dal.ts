@@ -1,215 +1,267 @@
-import { SupabaseClient } from '@supabase/supabase-js';
+import { PrismaClient } from '@prisma/client';
 
 export class TenantDB {
-  constructor(private supabase: SupabaseClient, private projectId: string) {}
+  constructor(private prisma: PrismaClient, private projectId: string) {}
 
   async getEmail(emailId: string) {
-    return this.supabase
-      .from('emails')
-      .select('*')
-      .eq('id', emailId)
-      .eq('project_id', this.projectId)
-      .single();
+    return this.prisma.email.findFirst({
+      where: {
+        id: emailId,
+        projectId: this.projectId,
+      },
+    });
+  }
+
+  async getEmails(limit: number = 10) {
+    return this.prisma.email.findMany({
+      where: {
+        projectId: this.projectId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: limit,
+    });
   }
 
   async getRecipientStats(email: string) {
-    // Return total sends, total opens, and latest open hour
-    const { data } = await this.supabase
-      .from('emails')
-      .select('status, opens, local_open_hour')
-      .eq('project_id', this.projectId)
-      .eq('to_email', email);
-    return data || [];
+    return this.prisma.email.findMany({
+      where: {
+        projectId: this.projectId,
+        toEmail: email,
+      },
+      select: {
+        status: true,
+        opens: true,
+        localOpenHour: true,
+      },
+    });
   }
 
   async isEmailSuppressed(email: string): Promise<boolean> {
-    const { data, error } = await this.supabase.rpc('is_email_suppressed', {
-      p_project_id: this.projectId,
-      p_email: email
-    });
-
-    if (error) {
-      console.error('isEmailSuppressed error:', error);
-      throw error;
-    }
-
-    return !!data;
+    const result = await this.prisma.$queryRaw<[{ exists: boolean }]>`
+      SELECT is_email_suppressed(${this.projectId}::uuid, ${email}) as exists
+    `;
+    return result[0]?.exists || false;
   }
 
   async getEmailVariants() {
-    return this.supabase
-      .from('email_variants')
-      .select('*')
-      .eq('project_id', this.projectId);
-  }
-
-  async incrementVariantSends(variantId: string) {
-    // Note: The RPC increment_variant_sends doesn't currently check project_id.
-    // However, we call it with a variantId which is project-scoped.
-    return this.supabase.rpc('increment_variant_sends', { variant_id: variantId });
-  }
-
-  async insertEmail(data: any) {
-    return this.supabase
-      .from('emails')
-      .insert({ ...data, project_id: this.projectId })
-      .select()
-      .single();
-  }
-
-  async updateEmailStatus(emailId: string, status: string) {
-    return this.supabase
-      .from('emails')
-      .update({ status })
-      .eq('id', emailId)
-      .eq('project_id', this.projectId);
-  }
-
-  async getFlow(flowId: string) {
-    return this.supabase
-      .from('flows')
-      .select('*')
-      .eq('id', flowId)
-      .eq('project_id', this.projectId)
-      .single();
-  }
-
-  async getActiveFlows() {
-    return this.supabase
-      .from('flows')
-      .select('*')
-      .eq('project_id', this.projectId)
-      .eq('is_active', true);
-  }
-
-  async getFlowsByTrigger(triggerType: string) {
-    return this.supabase
-      .from('flows')
-      .select('id')
-      .eq('project_id', this.projectId)
-      .eq('trigger_type', triggerType)
-      .eq('is_active', true);
-  }
-
-  async insertIdempotencyKey(key: string) {
-    // Idempotency keys are global in schema, but we can prefix them or just use as is
-    // The schema doesn't have project_id for idempotency_keys
-    return this.supabase
-      .from('idempotency_keys')
-      .insert({ idempotency_key: key });
-  }
-
-  async getEmailOpenHours(email: string) {
-    return this.supabase
-      .from('emails')
-      .select('local_open_hour')
-      .eq('to_email', email)
-      .eq('project_id', this.projectId);
-  }
-
-  async incrementOpens(emailId: string, userTimezone: string = 'UTC') {
-    // The RPC increment_opens updates the email record. 
-    // We should ideally verify project_id, but the current RPC doesn't take it.
-    // For now, we trust the emailId is valid for the tenant if it was retrieved via DAL.
-    return this.supabase.rpc('increment_opens', { 
-      email_id: emailId, 
-      user_timezone: userTimezone 
+    return this.prisma.emailVariant.findMany({
+      where: {
+        projectId: this.projectId,
+      },
     });
   }
 
+  async incrementVariantSends(variantId: string) {
+    return this.prisma.$executeRaw`
+      SELECT increment_variant_sends(${this.projectId}::uuid, ${variantId}::uuid)
+    `;
+  }
+
+  async insertEmail(data: any) {
+    return this.prisma.email.create({
+      data: {
+        ...data,
+        projectId: this.projectId,
+      },
+    });
+  }
+
+  async updateEmailStatus(emailId: string, status: string) {
+    return this.prisma.email.update({
+      where: {
+        id: emailId,
+        projectId: this.projectId,
+      },
+      data: {
+        status,
+      },
+    });
+  }
+
+  async getFlow(flowId: string) {
+    return this.prisma.flow.findFirst({
+      where: {
+        id: flowId,
+        projectId: this.projectId,
+      },
+    });
+  }
+
+  async getActiveFlows() {
+    return this.prisma.flow.findMany({
+      where: {
+        projectId: this.projectId,
+        isActive: true,
+      },
+    });
+  }
+
+  async getFlowsByTrigger(triggerType: string) {
+    return this.prisma.flow.findMany({
+      where: {
+        projectId: this.projectId,
+        triggerType: triggerType,
+        isActive: true,
+      },
+      select: {
+        id: true,
+      },
+    });
+  }
+
+  async insertIdempotencyKey(key: string) {
+    return this.prisma.idempotencyKey.create({
+      data: {
+        key,
+      },
+    });
+  }
+
+  async getEmailOpenHours(email: string) {
+    return this.prisma.email.findMany({
+      where: {
+        toEmail: email,
+        projectId: this.projectId,
+      },
+      select: {
+        localOpenHour: true,
+      },
+    });
+  }
+
+  async incrementOpens(emailId: string, userTimezone: string = 'UTC') {
+    return this.prisma.$executeRaw`
+      SELECT increment_opens(${this.projectId}::uuid, ${emailId}::uuid, ${userTimezone})
+    `;
+  }
+
   async incrementClicks(emailId: string) {
-    return this.supabase.rpc('increment_clicks', { email_id: emailId });
+    return this.prisma.$executeRaw`
+      SELECT increment_clicks(${this.projectId}::uuid, ${emailId}::uuid)
+    `;
   }
 
   async getProject() {
-    return this.supabase
-      .from('projects')
-      .select('*')
-      .eq('id', this.projectId)
-      .single();
+    return this.prisma.project.findUnique({
+      where: {
+        id: this.projectId,
+      },
+    });
   }
 
   async getWebhookConfigs() {
-    return this.supabase
-      .from('webhook_configs')
-      .select('*')
-      .eq('project_id', this.projectId);
+    return this.prisma.webhookConfig.findMany({
+      where: {
+        projectId: this.projectId,
+      },
+    });
   }
 
   async insertWebhookDelivery(configId: string, eventType: string, payload: any) {
-    // Verify configId belongs to project first or just trust it?
-    // Better to join or verify.
-    return this.supabase
-      .from('webhook_deliveries')
-      .insert({
-        webhook_config_id: configId,
-        event_type: eventType,
-        payload
-      });
+    return this.prisma.webhookDelivery.create({
+      data: {
+        webhookConfigId: configId,
+        eventType,
+        payload,
+      },
+    });
   }
 
   async getDomains() {
-    return this.supabase
-      .from('domains')
-      .select('*')
-      .eq('project_id', this.projectId);
+    return this.prisma.domain.findMany({
+      where: {
+        projectId: this.projectId,
+      },
+    });
   }
 
   async upsertSuppression(email: string, reason: string) {
-    return this.supabase
-      .from('suppressions')
-      .upsert({
-        project_id: this.projectId,
+    return this.prisma.suppression.upsert({
+      where: {
+        projectId_email: {
+          projectId: this.projectId,
+          email,
+        },
+      },
+      update: {
+        reason,
+      },
+      create: {
+        projectId: this.projectId,
         email,
-        reason
-      });
+        reason,
+      },
+    });
   }
 
-  async upsertContact(email: string, first_name?: string, last_name?: string, attributes?: any) {
-    return this.supabase
-      .from('contacts')
-      .upsert({
-        project_id: this.projectId,
-        email,
-        first_name,
-        last_name,
+  async upsertContact(email: string, firstName?: string, lastName?: string, attributes?: any) {
+    return this.prisma.contact.upsert({
+      where: {
+        projectId_email: {
+          projectId: this.projectId,
+          email,
+        },
+      },
+      update: {
+        firstName,
+        lastName,
         attributes: attributes || {},
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'project_id, email' })
-      .select()
-      .single();
+        updatedAt: new Date(),
+      },
+      create: {
+        projectId: this.projectId,
+        email,
+        firstName,
+        lastName,
+        attributes: attributes || {},
+      },
+    });
   }
 
-  async insertUserEvent(contact_id: string, event_name: string, properties?: any) {
-    return this.supabase
-      .from('user_events')
-      .insert({
-        contact_id,
-        event_name,
-        properties: properties || {}
-      })
-      .select()
-      .single();
+  async insertUserEvent(contactId: string, eventName: string, properties?: any) {
+    return this.prisma.userEvent.create({
+      data: {
+        projectId: this.projectId,
+        contactId,
+        eventName,
+        properties: properties || {},
+      },
+    });
   }
 
   async createSegment(name: string, rules: any) {
-    return this.supabase
-      .from('segments')
-      .insert({ project_id: this.projectId, name, rules })
-      .select()
-      .single();
+    return this.prisma.segment.create({
+      data: {
+        projectId: this.projectId,
+        name,
+        rules,
+      },
+    });
   }
 
   async getSegment(segmentId: string) {
-    return this.supabase
-      .from('segments')
-      .select('*')
-      .eq('id', segmentId)
-      .eq('project_id', this.projectId)
-      .single();
+    return this.prisma.segment.findFirst({
+      where: {
+        id: segmentId,
+        projectId: this.projectId,
+      },
+    });
+  }
+
+  async getFlowSuggestions(flowId: string) {
+    return this.prisma.flowSuggestion.findMany({
+      where: {
+        flowId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
   }
 
   async executeRawQuery(sql: string) {
-    return this.supabase.rpc('execute_segment_query', { p_query: sql });
+    return this.prisma.$queryRawUnsafe(sql);
   }
 }

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { Client } from "@upstash/workflow";
-import { createDbClient, TenantDB } from "@flowmail/db";
+import { getPrisma, TenantDB } from "@flowmail/db";
 import { apiKeyAuth } from '../middleware/auth';
 
 const events = new Hono<{
@@ -19,14 +19,13 @@ events.post('/', async (c) => {
     return c.json({ error: 'Missing event name' }, 400);
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL!;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  const tenantDb = new TenantDB(createDbClient(supabaseUrl, supabaseKey), projectId);
+  const tenantDb = new TenantDB(getPrisma(), projectId);
 
   // 1. Fetch active flows for this event and project
-  const { data: flows, error } = await tenantDb.getFlowsByTrigger(event);
-
-  if (error) {
+  let flows;
+  try {
+    flows = await tenantDb.getFlowsByTrigger(event);
+  } catch (error) {
     console.error('Error fetching flows:', error);
     return c.json({ error: 'Internal Server Error' }, 500);
   }

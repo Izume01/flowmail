@@ -12,10 +12,11 @@ const getRedis = () => {
   return redisInstance;
 };
 
-export const queueTrackingEvent = async (type: 'open' | 'click', emailId: string, metadata: any = {}) => {
+export const queueTrackingEvent = async (type: 'open' | 'click', emailId: string, projectId: string, metadata: any = {}) => {
   const event = {
     type,
     emailId,
+    projectId,
     timestamp: Date.now(),
     ...metadata
   };
