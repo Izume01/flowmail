@@ -1,0 +1,23 @@
+{
+  "name": "api",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "worker:analytics": "bun src/workers/analytics-worker.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@flowmail/ai": "workspace:*",
+    "@flowmail/db": "workspace:*",
+    "@flowmail/email": "workspace:*",
+    "@flowmail/shared": "workspace:*",
+    "@hono/zod-validator": "latest",
+    "@upstash/qstash": "^2.11.0",
+    "@upstash/redis": "^1.38.0",
+    "@upstash/workflow": "^1.2.1",
+    "hono": "latest",
+    "hono-rate-limiter": "^0.5.3",
+    "stripe": "^22.1.1",
+    "zod": "latest"
+  }
+}

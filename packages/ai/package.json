@@ -1,0 +1,13 @@
+{
+  "name": "@flowmail/ai",
+  "version": "0.0.0",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

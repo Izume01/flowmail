@@ -1,0 +1,20 @@
+{
+  "name": "flowmail",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter \"*\" dev & bun run worker:analytics",
+    "dev:api": "bun --filter api dev",
+    "dev:web": "bun --filter web dev",
+    "dev:worker": "bun --filter api worker:analytics",
+    "worker:analytics": "bun --filter api worker:analytics",
+    "setup:db": "echo 'Apply flowmail/packages/db/src/schema.sql to your Supabase SQL editor'",
+    "test": "bun test --filter '*'"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.38.0"
+  }
+}
