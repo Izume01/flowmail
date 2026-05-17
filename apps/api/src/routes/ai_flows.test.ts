@@ -21,7 +21,7 @@ describe('AI Flows Router', () => {
   let app: Hono;
 
   beforeEach(() => {
-    process.env.ANTHROPIC_API_KEY = 'test-key';
+    process.env.GOOGLE_AI_API_KEY = 'test-key';
     app = new Hono();
     app.route('/ai/flows', aiFlowsRouter);
     

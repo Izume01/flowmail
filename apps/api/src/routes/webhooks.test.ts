@@ -1,27 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'bun:test';
 import { Hono } from 'hono';
 import webhooksRouter from './webhooks';
-import * as db from '@flowmail/db';
 
 // Mocks
 const mockUpsert = vi.fn();
-const mockFrom = vi.fn((table) => {
-  if (table === 'domains') {
-    return {
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: { project_id: 'project-123' }, error: null }),
-    };
-  }
-  return {
+const mockFindFirst = vi.fn();
+
+const mockPrisma = {
+  domain: {
+    findFirst: mockFindFirst,
+  },
+  suppression: {
     upsert: mockUpsert,
-  };
-});
-const mockDbClient = { from: mockFrom };
+  },
+};
 
 vi.mock('@flowmail/db', () => ({
-  createDbClient: vi.fn(() => mockDbClient),
+  getPrisma: vi.fn(() => mockPrisma),
 }));
 
 // Mock fetch globally
@@ -31,13 +26,11 @@ describe('webhooks router', () => {
   let app: Hono;
 
   beforeEach(() => {
-    process.env.SUPABASE_URL = 'http://localhost:54321';
-    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-key';
-
     app = new Hono();
     app.route('/webhooks', webhooksRouter);
 
     mockUpsert.mockReset();
+    mockFindFirst.mockReset();
     (global.fetch as any).mockClear();
   });
 
@@ -59,6 +52,8 @@ describe('webhooks router', () => {
   });
 
   it('should handle SES Bounce notification', async () => {
+    mockFindFirst.mockResolvedValue({ projectId: 'project-123' });
+
     const message = JSON.stringify({
       notificationType: 'Bounce',
       bounce: {
@@ -85,15 +80,22 @@ describe('webhooks router', () => {
     expect(await res.text()).toBe('OK');
     expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        email: 'bounced@example.com',
-        reason: 'bounce',
-        project_id: 'project-123'
-      }),
-      expect.anything()
+        where: {
+          projectId_email: {
+            projectId: 'project-123',
+            email: 'bounced@example.com'
+          }
+        },
+        create: expect.objectContaining({
+          reason: 'bounce'
+        })
+      })
     );
   });
 
   it('should handle SES Complaint notification', async () => {
+    mockFindFirst.mockResolvedValue({ projectId: 'project-123' });
+
     const message = JSON.stringify({
       notificationType: 'Complaint',
       complaint: {
@@ -119,11 +121,16 @@ describe('webhooks router', () => {
     expect(await res.text()).toBe('OK');
     expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        email: 'complainer@example.com',
-        reason: 'complaint',
-        project_id: 'project-123'
-      }),
-      expect.anything()
+        where: {
+          projectId_email: {
+            projectId: 'project-123',
+            email: 'complainer@example.com'
+          }
+        },
+        create: expect.objectContaining({
+          reason: 'complaint'
+        })
+      })
     );
   });
 });

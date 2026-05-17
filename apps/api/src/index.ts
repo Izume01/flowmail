@@ -11,6 +11,8 @@ import aiFlows from './routes/ai_flows';
 import flows from './routes/flows';
 import webhooks from './routes/webhooks';
 import audience from './routes/audience';
+import domains from './routes/domains';
+import compliance from './routes/compliance';
 import { auth } from '@flowmail/auth';
 import { flowWorkflow } from './routes/workflows';
 
@@ -46,6 +48,8 @@ app.route('/ai/flows', aiFlows);
 app.route('/flows', flows);
 app.route('/webhooks', webhooks);
 app.route('/audience', audience);
+app.route('/domains', domains);
+app.route('/compliance', compliance);
 app.post('/workflow', flowWorkflow);
 
 log.info('FlowMail API started', { port: 3001 });

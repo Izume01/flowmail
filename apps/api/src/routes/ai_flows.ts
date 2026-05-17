@@ -8,10 +8,10 @@ aiFlows.use('*', apiKeyAuth);
 
 aiFlows.post('/generate', async (c) => {
   const { prompt } = await c.req.json();
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
 
   if (!apiKey) {
-    return c.json({ error: 'ANTHROPIC_API_KEY not configured' }, 500);
+    return c.json({ error: 'GOOGLE_AI_API_KEY not configured' }, 500);
   }
 
   if (!prompt) {

@@ -1,23 +1,23 @@
 export type LogLevel = 'INFO' | 'ERROR' | 'WARN' | 'DEBUG';
 
 export class Logger {
-  info(message: string, data?: any) {
+  info(message: string, data?: Record<string, unknown>) {
     this.log('INFO', message, data);
   }
 
-  error(message: string, data?: any) {
+  error(message: string, data?: Record<string, unknown>) {
     this.log('ERROR', message, data);
   }
 
-  warn(message: string, data?: any) {
+  warn(message: string, data?: Record<string, unknown>) {
     this.log('WARN', message, data);
   }
 
-  debug(message: string, data?: any) {
+  debug(message: string, data?: Record<string, unknown>) {
     this.log('DEBUG', message, data);
   }
 
-  private log(level: LogLevel, message: string, data?: any) {
+  private log(level: LogLevel, message: string, data?: Record<string, unknown>) {
     console.log(JSON.stringify({
       timestamp: new Date().toISOString(),
       level,

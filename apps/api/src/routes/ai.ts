@@ -21,10 +21,10 @@ const scoreSchema = z.object({
 
 ai.post('/score', zValidator('json', scoreSchema), async (c) => {
   const { subject, body } = c.req.valid('json');
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
 
   if (!apiKey) {
-    return c.json({ error: 'ANTHROPIC_API_KEY not configured' }, 500);
+    return c.json({ error: 'GOOGLE_AI_API_KEY not configured' }, 500);
   }
 
   try {
@@ -37,10 +37,10 @@ ai.post('/score', zValidator('json', scoreSchema), async (c) => {
 
 ai.post('/improve', zValidator('json', scoreSchema), async (c) => {
   const { subject, body } = c.req.valid('json');
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
 
   if (!apiKey) {
-    return c.json({ error: 'ANTHROPIC_API_KEY not configured' }, 500);
+    return c.json({ error: 'GOOGLE_AI_API_KEY not configured' }, 500);
   }
 
   try {
@@ -53,10 +53,10 @@ ai.post('/improve', zValidator('json', scoreSchema), async (c) => {
 
 ai.post('/sentiment', zValidator('json', z.object({ content: z.string().min(1) })), async (c) => {
   const { content } = c.req.valid('json');
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
 
   if (!apiKey) {
-    return c.json({ error: 'ANTHROPIC_API_KEY not configured' }, 500);
+    return c.json({ error: 'GOOGLE_AI_API_KEY not configured' }, 500);
   }
 
   try {

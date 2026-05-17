@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI } from "@google/genai";
 import { z } from 'zod';
 
 export interface DeliverabilityResult {
@@ -13,9 +13,23 @@ export interface ImprovementResult {
   explanation: string;
 }
 
+export interface FlowGraphNode {
+  id: string;
+  type: string;
+  data: Record<string, unknown>;
+  position: { x: number; y: number };
+}
+
+export interface FlowGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+}
+
 export interface FlowGraphResult {
-  nodes: any[];
-  edges: any[];
+  nodes: FlowGraphNode[];
+  edges: FlowGraphEdge[];
 }
 
 export interface SentimentResult {
@@ -35,21 +49,52 @@ export interface FlowPerformanceResult {
 }
 
 const aiRequestSchema = z.object({
-  apiKey: z.string().min(1, 'Anthropic API Key is required'),
+  apiKey: z.string().min(1, 'Google AI API Key is required'),
   subject: z.string().min(1, 'Subject is required'),
   body: z.string().min(1, 'Body is required'),
 });
 
 const performanceRequestSchema = z.object({
-  apiKey: z.string().min(1, 'Anthropic API Key is required'),
+  apiKey: z.string().min(1, 'Google AI API Key is required'),
   flowName: z.string().min(1, 'Flow name is required'),
-  stats: z.any(),
+  stats: z.record(z.unknown()),
+});
+
+const FlowGraphNodeSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  data: z.record(z.unknown()),
+  position: z.object({ x: z.number(), y: z.number() }),
+});
+
+const FlowGraphEdgeSchema = z.object({
+  id: z.string(),
+  source: z.string(),
+  target: z.string(),
+  sourceHandle: z.string().optional(),
 });
 
 const sentimentRequestSchema = z.object({
-  apiKey: z.string().min(1, 'Anthropic API Key is required'),
+  apiKey: z.string().min(1, 'Google AI API Key is required'),
   content: z.string().min(1, 'Content is required'),
 });
+
+function tryExtractJson<T>(text: string, errorMessage: string = 'Failed to parse AI response'): T {
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON found in response');
+    return JSON.parse(jsonMatch[0]) as T;
+  } catch (error) {
+    console.error('Failed to parse AI response:', text);
+    throw new Error(errorMessage);
+  }
+}
+
+const MODEL_NAME = "gemini-flash-latest";
+
+const getClient = (apiKey: string) => {
+  return new GoogleGenAI({ apiKey });
+};
 
 export const getDeliverabilityScore = async (
   apiKey: string,
@@ -57,35 +102,23 @@ export const getDeliverabilityScore = async (
   body: string
 ): Promise<DeliverabilityResult> => {
   aiRequestSchema.parse({ apiKey, subject, body });
-  const anthropic = new Anthropic({ apiKey });
+  const client = getClient(apiKey);
 
-  const response = await anthropic.messages.create({
-    model: 'claude-3-5-sonnet-20240620',
-    max_tokens: 1000,
-    messages: [
-      {
-        role: 'user',
-        content: `Analyze this email for deliverability. 
+  const result = await client.models.generateContent({
+    model: MODEL_NAME,
+    contents: `Analyze this email for deliverability. 
       Subject: ${subject}
       Body: ${body}
       
       Return ONLY a valid JSON object with the following structure:
-      { "score": 0-100, "recommendations": ["list of strings"], "spam_triggers": ["list of strings"] }`,
-      },
-    ],
+      { "score": 0-100, "recommendations": ["list of strings"], "spam_triggers": ["list of strings"] }`
   });
 
-  const content = response.content[0];
-  if (!content || content.type !== 'text') {
-    throw new Error('Unexpected response content type from Anthropic');
+  if (!result.text) {
+    throw new Error('Unexpected empty response from Google AI');
   }
 
-  try {
-    return JSON.parse(content.text) as DeliverabilityResult;
-  } catch (error) {
-    console.error('Failed to parse AI response:', content.text);
-    throw new Error('Failed to parse AI deliverability score');
-  }
+  return tryExtractJson<DeliverabilityResult>(result.text, 'Failed to parse AI deliverability score');
 };
 
 export const improveEmailContent = async (
@@ -94,35 +127,23 @@ export const improveEmailContent = async (
   body: string
 ): Promise<ImprovementResult> => {
   aiRequestSchema.parse({ apiKey, subject, body });
-  const anthropic = new Anthropic({ apiKey });
+  const client = getClient(apiKey);
 
-  const response = await anthropic.messages.create({
-    model: 'claude-3-5-sonnet-20240620',
-    max_tokens: 2000,
-    messages: [
-      {
-        role: 'user',
-        content: `You are an expert Copywriter. Rewrite this email to improve deliverability and engagement.
+  const result = await client.models.generateContent({
+    model: MODEL_NAME,
+    contents: `You are an expert Copywriter. Rewrite this email to improve deliverability and engagement.
       Original Subject: ${subject}
       Original Body: ${body}
       
       Return ONLY a valid JSON object with the following structure:
-      { "optimized_subject": "string", "optimized_body": "string", "explanation": "string" }`,
-      },
-    ],
+      { "optimized_subject": "string", "optimized_body": "string", "explanation": "string" }`
   });
 
-  const content = response.content[0];
-  if (!content || content.type !== 'text') {
-    throw new Error('Unexpected response content type from Anthropic');
+  if (!result.text) {
+    throw new Error('Unexpected empty response from Google AI');
   }
 
-  try {
-    return JSON.parse(content.text) as ImprovementResult;
-  } catch (error) {
-    console.error('Failed to parse AI response:', content.text);
-    throw new Error('Failed to parse AI improvement result');
-  }
+  return tryExtractJson<ImprovementResult>(result.text, 'Failed to parse AI improvement result');
 };
 
 export const generateFlowGraph = async (
@@ -130,16 +151,15 @@ export const generateFlowGraph = async (
   prompt: string
 ): Promise<FlowGraphResult> => {
   z.object({
-    apiKey: z.string().min(1, 'Anthropic API Key is required'),
+    apiKey: z.string().min(1, 'Google AI API Key is required'),
     prompt: z.string().min(1, 'Prompt is required'),
   }).parse({ apiKey, prompt });
   
-  const anthropic = new Anthropic({ apiKey });
+  const client = getClient(apiKey);
 
-  const response = await anthropic.messages.create({
-    model: 'claude-3-5-sonnet-20240620',
-    max_tokens: 4000,
-    system: `You are a FlowMail Architect. Generate a valid React Flow JSON graph for email automation.
+  const result = await client.models.generateContent({
+    model: MODEL_NAME,
+    contents: `You are a FlowMail Architect. Generate a valid React Flow JSON graph for email automation.
 Available nodes: 
 1. trigger: The starting point. No data needed.
 2. send_email: Sends an email. data: { from: string, subject: string, html: string, text: string }
@@ -149,26 +169,22 @@ Available nodes:
 Each node MUST have: id (string), type (string), data (object), position (object with x and y).
 Each edge MUST have: id (string), source (string), target (string), and sourceHandle (string, for condition nodes).
 
-Output ONLY a valid JSON object with { "nodes": [], "edges": [] }.`,
-    messages: [
-      {
-        role: 'user',
-        content: `Generate a flow for: ${prompt}`,
-      },
-    ],
+Output ONLY a valid JSON object with { "nodes": [], "edges": [] }. Prompt: ${prompt}`
   });
 
-  const content = response.content[0];
-  if (!content || content.type !== 'text') {
-    throw new Error('Unexpected response content type from Anthropic');
+  if (!result.text) {
+    throw new Error('Unexpected empty response from Google AI');
   }
 
-  try {
-    return JSON.parse(content.text) as FlowGraphResult;
-  } catch (error) {
-    console.error('Failed to parse AI response:', content.text);
-    throw new Error('Failed to parse AI flow graph');
-  }
+  const json = tryExtractJson<FlowGraphResult>(result.text, 'Failed to parse AI flow graph');
+  
+  // Validate with Zod
+  z.object({
+    nodes: z.array(FlowGraphNodeSchema),
+    edges: z.array(FlowGraphEdgeSchema),
+  }).parse(json);
+
+  return json;
 };
 
 export const analyzeSentiment = async (
@@ -176,51 +192,35 @@ export const analyzeSentiment = async (
   content: string
 ): Promise<SentimentResult> => {
   sentimentRequestSchema.parse({ apiKey, content });
-  const anthropic = new Anthropic({ apiKey });
+  const client = getClient(apiKey);
 
-  const response = await anthropic.messages.create({
-    model: 'claude-3-5-sonnet-20240620',
-    max_tokens: 1000,
-    messages: [
-      {
-        role: 'user',
-        content: `Analyze the sentiment of the following content.
+  const result = await client.models.generateContent({
+    model: MODEL_NAME,
+    contents: `Analyze the sentiment of the following content.
       Content: ${content}
       
       Return ONLY a valid JSON object with the following structure:
-      { "sentiment": "string", "score": number (0-1), "intent": "string" }`,
-      },
-    ],
+      { "sentiment": "string", "score": number (0-1), "intent": "string" }`
   });
 
-  const messageContent = response.content[0];
-  if (!messageContent || messageContent.type !== 'text') {
-    throw new Error('Unexpected response content type from Anthropic');
+  if (!result.text) {
+    throw new Error('Unexpected empty response from Google AI');
   }
 
-  try {
-    return JSON.parse(messageContent.text) as SentimentResult;
-  } catch (error) {
-    console.error('Failed to parse AI response:', messageContent.text);
-    throw new Error('Failed to parse AI sentiment analysis');
-  }
+  return tryExtractJson<SentimentResult>(result.text, 'Failed to parse AI sentiment analysis');
 };
 
 export const analyzeFlowPerformance = async (
   apiKey: string,
   flowName: string,
-  stats: any
+  stats: Record<string, unknown>
 ): Promise<FlowPerformanceResult> => {
   performanceRequestSchema.parse({ apiKey, flowName, stats });
-  const anthropic = new Anthropic({ apiKey });
+  const client = getClient(apiKey);
 
-  const response = await anthropic.messages.create({
-    model: 'claude-3-5-sonnet-20240620',
-    max_tokens: 1500,
-    messages: [
-      {
-        role: 'user',
-        content: `Analyze this automated email flow performance data.
+  const result = await client.models.generateContent({
+    model: MODEL_NAME,
+    contents: `Analyze this automated email flow performance data.
       Flow: ${flowName}
       Stats: ${JSON.stringify(stats)}
       
@@ -238,23 +238,12 @@ export const analyzeFlowPerformance = async (
         "suggestions": [
           { "node_id": "optional_string", "content": "detailed suggestion", "priority": "high" | "medium" | "low" }
         ] 
-      }`,
-      },
-    ],
+      }`
   });
 
-  const content = response.content[0];
-  if (!content || content.type !== 'text') {
-    throw new Error('Unexpected response content type from Anthropic');
+  if (!result.text) {
+    throw new Error('Unexpected empty response from Google AI');
   }
 
-  try {
-    // Try to find JSON in the response if there's any preamble
-    const jsonMatch = content.text.match(/\{[\s\S]*\}/);
-    const jsonString = jsonMatch ? jsonMatch[0] : content.text;
-    return JSON.parse(jsonString) as FlowPerformanceResult;
-  } catch (error) {
-    console.error('Failed to parse AI response:', content.text);
-    throw new Error('Failed to parse AI flow performance analysis');
-  }
+  return tryExtractJson<FlowPerformanceResult>(result.text, 'Failed to parse AI flow performance analysis');
 };

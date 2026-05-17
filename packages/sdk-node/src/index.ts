@@ -76,7 +76,7 @@ export class FlowMail {
   /**
    * Track a custom user event.
    */
-  async track(payload: TrackRequest): Promise<any> {
+  async track(payload: TrackRequest): Promise<Record<string, unknown>> {
     trackSchema.parse(payload);
     return this.request('/audience/track', { method: 'POST', body: JSON.stringify(payload) });
   }

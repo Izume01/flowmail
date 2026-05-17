@@ -1,4 +1,4 @@
-import { expect, test, mock, describe, beforeEach } from "bun:test";
+import { expect, test, mock, describe } from "bun:test";
 import { getDeliverabilityScore, improveEmailContent, analyzeSentiment } from "./index";
 
 let mockResponseText = JSON.stringify({
@@ -7,18 +7,13 @@ let mockResponseText = JSON.stringify({
   spam_triggers: ["FREE"],
 });
 
-mock.module("@anthropic-ai/sdk", () => {
+mock.module("@google/genai", () => {
   return {
-    default: class {
-      messages = {
-        create: async () => {
+    GoogleGenAI: class {
+      models = {
+        generateContent: async () => {
           return {
-            content: [
-              {
-                type: "text",
-                text: mockResponseText,
-              },
-            ],
+            text: mockResponseText,
           };
         },
       };

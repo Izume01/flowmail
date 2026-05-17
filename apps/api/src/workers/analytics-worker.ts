@@ -52,7 +52,8 @@ async function processBatch() {
           stats.clicks
         );
       } catch (e) {
-        console.error(`Worker: Error updating stats for ${emailId}:`, e);
+        console.error(`Worker: Error updating stats for email ${emailId} in project ${stats.projectId}:`, e);
+        // We continue to the next emailId, so we don't lose the whole batch.
       }
     }
     console.log(`[${new Date().toISOString()}] Worker: Batch processed successfully.`);

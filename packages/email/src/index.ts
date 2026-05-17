@@ -38,7 +38,8 @@ export const sendEmail = async (
   to: string,
   subject: string,
   html?: string,
-  text?: string
+  text?: string,
+  configurationSetName?: string
 ) => {
   z.object({
     from: z.string().email(),
@@ -46,7 +47,8 @@ export const sendEmail = async (
     subject: z.string().min(1),
     html: z.string().optional(),
     text: z.string().optional(),
-  }).parse({ from, to, subject, html, text });
+    configurationSetName: z.string().optional(),
+  }).parse({ from, to, subject, html, text, configurationSetName });
 
   if (!client) {
     throw new Error("SES Client is required");
@@ -62,6 +64,7 @@ export const sendEmail = async (
       Subject: { Data: subject, Charset: "UTF-8" },
     },
     Source: from,
+    ConfigurationSetName: configurationSetName,
   });
   return client.send(command);
 };
@@ -74,10 +77,11 @@ export const sendTemplatedEmail = async (
   from: string,
   to: string,
   subject: string,
-  component: React.ReactElement
+  component: React.ReactElement,
+  configurationSetName?: string
 ) => {
   const html = await renderTemplate(component);
-  return sendEmail(client, from, to, subject, html);
+  return sendEmail(client, from, to, subject, html, undefined, configurationSetName);
 };
 
 export * from "./templates/BaseTemplate";

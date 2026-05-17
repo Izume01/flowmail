@@ -6,9 +6,9 @@ const prisma = getPrisma();
 async function processFlows() {
   console.log(`[${new Date().toISOString()}] Copilot Worker: Starting processing...`);
   
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
   if (!apiKey) {
-    console.error('Copilot Worker: ANTHROPIC_API_KEY is missing');
+    console.error('Copilot Worker: GOOGLE_AI_API_KEY is missing');
     return;
   }
 

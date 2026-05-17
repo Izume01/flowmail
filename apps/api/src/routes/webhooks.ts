@@ -1,11 +1,11 @@
 import { Hono } from 'hono';
-import { createDbClient } from '@flowmail/db';
+import { getPrisma } from '@flowmail/db';
 
 const webhooks = new Hono();
 
 webhooks.post('/ses', async (c) => {
   const body = await c.req.json();
-  const supabase = createDbClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+  const prisma = getPrisma();
 
   // Handle SNS SubscriptionConfirmation
   if (body.Type === 'SubscriptionConfirmation') {
@@ -22,31 +22,51 @@ webhooks.post('/ses', async (c) => {
     const source = mail.source;
     const domainName = source.split('@')[1];
     
-    const { data: domain } = await supabase
-      .from('domains')
-      .select('project_id')
-      .eq('domain_name', domainName)
-      .limit(1)
-      .maybeSingle();
+    const domain = await prisma.domain.findFirst({
+      where: { domainName: domainName },
+      select: { projectId: true }
+    });
 
-    const projectId = domain?.project_id;
+    const projectId = domain?.projectId;
 
     if (notificationType === 'Bounce' && msg.bounce.bounceType === 'Permanent') {
       const email = msg.bounce.bouncedRecipients[0].emailAddress;
-      await supabase.from('suppressions').upsert({
-        project_id: projectId,
-        email,
-        reason: 'bounce'
-      }, { onConflict: 'project_id,email' });
+      if (projectId) {
+        await prisma.suppression.upsert({
+          where: {
+            projectId_email: {
+              projectId,
+              email
+            }
+          },
+          update: { reason: 'bounce' },
+          create: {
+            projectId,
+            email,
+            reason: 'bounce'
+          }
+        });
+      }
     }
 
     if (notificationType === 'Complaint') {
       const email = msg.complaint.complainedRecipients[0].emailAddress;
-      await supabase.from('suppressions').upsert({
-        project_id: projectId,
-        email,
-        reason: 'complaint'
-      }, { onConflict: 'project_id,email' });
+      if (projectId) {
+        await prisma.suppression.upsert({
+          where: {
+            projectId_email: {
+              projectId,
+              email
+            }
+          },
+          update: { reason: 'complaint' },
+          create: {
+            projectId,
+            email,
+            reason: 'complaint'
+          }
+        });
+      }
     }
   }
 

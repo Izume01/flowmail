@@ -26,6 +26,19 @@ emails.get('/', async (c) => {
   }
 });
 
+/**
+ * Extracts {{tag}} placeholders from a string.
+ */
+function extractTags(content: string): string[] {
+  const regex = /\{\{([^}]+)\}\}/g;
+  const tags: string[] = [];
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    tags.push(match[1].trim());
+  }
+  return [...new Set(tags)].sort();
+}
+
 emails.post('/', zValidator('json', sendEmailSchema), async (c) => {
   const body = c.req.valid('json');
   const projectId = c.get('projectId');
@@ -71,12 +84,27 @@ emails.post('/', zValidator('json', sendEmailSchema), async (c) => {
     }
   }
 
+  // AI Hallucination Protection:
+  // If this was an "Optimized" email, ensure placeholders are preserved.
+  // Note: For now, we compare the incoming body tags vs. final subject/html tags.
+  const originalTags = extractTags((body.html || '') + (body.text || '') + (body.subject || ''));
+  const finalTags = extractTags((finalHtml || '') + (finalText || '') + (finalSubject || ''));
+
+  const missingTags = originalTags.filter(tag => !finalTags.includes(tag));
+  if (missingTags.length > 0) {
+    console.warn(`AI Hallucination detected: missing tags ${missingTags.join(', ')}. Falling back to original.`);
+    // Fallback to original content if tags were deleted
+    finalSubject = body.subject || finalSubject;
+    finalHtml = body.html || finalHtml;
+    finalText = body.text || finalText;
+  }
+
   // 1. Log email as pending
   try {
     const emailRecord = await tenantDb.insertEmail({
       from_email: body.from,
       to_email: body.to,
-      subject: finalSubject,
+      subject: finalSubject!,
       body_html: finalHtml,
       body_text: finalText,
       status: 'pending',
@@ -90,6 +118,9 @@ emails.post('/', zValidator('json', sendEmailSchema), async (c) => {
 
     const emailClient = createEmailClient(sesRegion, sesAccessKeyId, sesSecretAccessKey);
 
+    // Fetch configuration set name from project (simulated for MVP)
+    const configSetName = 'flowmail-default';
+
     try {
       await sendEmail(
         emailClient,
@@ -97,7 +128,8 @@ emails.post('/', zValidator('json', sendEmailSchema), async (c) => {
         body.to,
         finalSubject!,
         finalHtml,
-        finalText
+        finalText,
+        configSetName
       );
 
       // 3. Update status to sent

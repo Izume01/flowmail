@@ -30,9 +30,7 @@ describe('ai router', () => {
   let app: Hono;
 
   beforeEach(() => {
-    process.env.ANTHROPIC_API_KEY = 'test-key';
-    process.env.SUPABASE_URL = 'http://localhost:54321';
-    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-key';
+    process.env.GOOGLE_AI_API_KEY = 'test-key';
     
     mockFindUnique.mockResolvedValue({ id: 'proj-123' });
     
@@ -132,8 +130,8 @@ describe('ai router', () => {
       expect(res.status).toBe(400);
     });
 
-    it('should return 500 if ANTHROPIC_API_KEY is missing', async () => {
-      delete process.env.ANTHROPIC_API_KEY;
+    it('should return 500 if GOOGLE_AI_API_KEY is missing', async () => {
+      delete process.env.GOOGLE_AI_API_KEY;
       const res = await app.request('/sentiment', {
         method: 'POST',
         headers: { 
@@ -145,8 +143,7 @@ describe('ai router', () => {
 
       expect(res.status).toBe(500);
       const data = await res.json();
-      expect(data.error).toBe('ANTHROPIC_API_KEY not configured');
+      expect(data.error).toBe('GOOGLE_AI_API_KEY not configured');
     });
   });
 });
-

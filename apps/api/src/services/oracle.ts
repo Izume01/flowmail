@@ -24,8 +24,12 @@ export async function calculateProbability(tenantDb: TenantDB, email: string, su
   // Find most frequent open hour
   const hours = opens.map((o: any) => o.local_open_hour).filter((h: any) => h !== null);
   if (hours.length > 0) {
-    const modeHour = hours.sort((a: any, b: any) => hours.filter((v: any) => v===a).length - hours.filter((v: any) => v===b).length).pop();
-    const distance = Math.abs((modeHour || 0) - targetHourLocal);
+    const modeHour = hours.sort((a: any, b: any) => hours.filter((v: any) => v===a).length - hours.filter((v: any) => v===b).length).pop() ?? 0;
+    
+    // Circular distance: min(|a-b|, 24 - |a-b|)
+    const rawDiff = Math.abs(modeHour - targetHourLocal);
+    const distance = Math.min(rawDiff, 24 - rawDiff);
+
     if (distance <= 2) {
       probability += 15;
       factors.push(`Sending close to preferred hour (${modeHour}:00)`);

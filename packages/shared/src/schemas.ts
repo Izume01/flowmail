@@ -14,7 +14,7 @@ export const identifySchema = z.object({
   email: z.string().email(),
   first_name: z.string().optional(),
   last_name: z.string().optional(),
-  attributes: z.record(z.any()).optional(),
+  attributes: z.record(z.unknown()).optional(),
 });
 
 export type IdentifyRequest = z.infer<typeof identifySchema>;
@@ -22,7 +22,7 @@ export type IdentifyRequest = z.infer<typeof identifySchema>;
 export const trackSchema = z.object({
   email: z.string().email(),
   event_name: z.string(),
-  properties: z.record(z.any()).optional(),
+  properties: z.record(z.unknown()).optional(),
 });
 
 export type TrackRequest = z.infer<typeof trackSchema>;

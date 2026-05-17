@@ -3,7 +3,8 @@
   "private": true,
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "demo-app"
   ],
   "scripts": {
     "dev": "bun run --filter \"*\" dev & bun run worker:analytics",
@@ -12,10 +13,14 @@
     "dev:worker": "bun --filter api worker:analytics",
     "worker:analytics": "bun --filter api worker:analytics",
     "setup:db": "echo 'Apply flowmail/packages/db/src/schema.sql to your Supabase SQL editor'",
+    "run:demo": "bun demo-app/index.ts",
     "test": "bun test --filter '*'"
   },
   "dependencies": {
     "@upstash/redis": "^1.38.0",
     "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
   }
 }

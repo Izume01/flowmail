@@ -5,7 +5,7 @@
   "types": "./src/index.ts",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.96.0",
+    "@google/genai": "^2.3.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
